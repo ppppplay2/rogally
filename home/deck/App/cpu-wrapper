@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+GOVERNOR_SCRIPT="$HOME/App/cpu-governor.sh"
+GOV_PID=""
+
+cleanup() {
+    if [[ -n "$GOV_PID" ]] && kill -0 "$GOV_PID" 2>/dev/null; then
+        kill -TERM -- -"$GOV_PID" 2>/dev/null || true
+        wait "$GOV_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+setsid sudo -n "$GOVERNOR_SCRIPT" &
+GOV_PID=$!
+
+
+"$@"
