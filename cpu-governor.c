@@ -19,6 +19,12 @@
 #define STEP_DOWN_FAR   3
 #define STEP_UP_SLOW    4
 #define HYSTERESIS      10000L
+
+/* PSI 配置 */
+#define PSI_CPU_FILE    "/proc/pressure/cpu"
+#define PSI_SOME_THRESHOLD  2.0      /* some avg10 超过 2.0% 视为卡顿 */
+#define PSI_CHECK_UTIL_MIN  40       /* 利用率低于此值不读 PSI */
+#define PSI_CHECK_UTIL_MAX  92       /* 利用率高于此值直接走常规升频 */
 /* ================ */
 
 static volatile sig_atomic_t stop_flag = 0;
@@ -41,6 +47,23 @@ static int read_cpu(unsigned long long *idle_out, unsigned long long *total_out)
     *idle_out  = idle + iowait;
     *total_out = user + nice + system + idle + iowait + irq + softirq + steal;
     return 0;
+}
+
+/* 读取 /proc/pressure/cpu 的 some avg10，返回百分比 (0.0 - 100.0)，失败返回 -1 */
+static double read_psi_cpu_some_avg10(void) {
+    FILE *f = fopen(PSI_CPU_FILE, "r");
+    if (!f) return -1.0;
+    char line[256];
+    double avg10 = -1.0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "some ", 5) != 0) continue;
+        char *p = strstr(line, "avg10=");
+        if (!p) break;
+        if (sscanf(p, "avg10=%lf", &avg10) != 1) avg10 = -1.0;
+        break;
+    }
+    fclose(f);
+    return avg10;
 }
 
 static void write_freq(const char *path, long freq) {
@@ -137,13 +160,28 @@ int main(void) {
         int util = (int)((dt - di) * 100ULL / dt);
 
         long target;
-        if (util >= CEILING_UTIL) {
-            target = global_max;                 /* 立刻拉满 */
+
+        /* ---- PSI 检查：仅在利用率中间区间读取，避免不必要的文件开销 ---- */
+        double psi_pressure = -1.0;
+        if (util >= PSI_CHECK_UTIL_MIN && util < PSI_CHECK_UTIL_MAX) {
+            psi_pressure = read_psi_cpu_some_avg10();
+        }
+
+        /* ---- 决策逻辑 ---- */
+        if (psi_pressure >= PSI_SOME_THRESHOLD) {
+            /* PSI 显示真实卡顿：立刻拉满 */
+            target = global_max;
+        } else if (util >= CEILING_UTIL) {
+            /* 利用率过高：立刻拉满 */
+            target = global_max;
         } else if (util >= TARGET_UTIL) {
+            /* 略高于目标：小幅升频 */
             target = current + global_max * STEP_UP_SLOW / 100;
         } else if (util < FLOOR_UTIL) {
+            /* 远低于目标：加速降频 */
             target = current - global_max * STEP_DOWN_FAR / 100;
         } else {
+            /* 接近目标：缓慢降频 */
             target = current - global_max * STEP_DOWN_NEAR / 100;
         }
 
