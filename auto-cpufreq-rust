@@ -1,0 +1,91 @@
+# Maintainer: Zaman Huseynli <zamanhuseynli23@gmail.com>
+# Prebuilt binary version, no cargo build, with systemd service
+pkgname=auto-cpufreq-rust-bin
+_pkgname=auto-cpufreq-rust
+pkgver=3.3.0
+pkgrel=1
+pkgdesc='Automatic CPU speed & power optimizer (Rust port, prebuilt CLI only, with systemd service)'
+arch=('x86_64')
+url="https://codeberg.org/Zamanhuseyinli/auto-cpufreq-rust"
+license=('LGPL-3.0')
+depends=('dmidecode' 'curl' 'openssl')
+makedepends=('git')
+provides=('auto-cpufreq')
+conflicts=('auto-cpufreq' 'auto-cpufreq-git' 'auto-cpufreq-rust-git')
+backup=('etc/auto-cpufreq.conf')
+
+source=(
+  "auto-cpufreq::${url}/releases/download/v${pkgver}/auto-cpufreq"
+  "git+${url}.git#tag=v${pkgver}"
+  "auto-cpufreq.service"
+  "auto-cpufreq.conf"
+)
+sha256sums=(
+  'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+)
+
+options=(!strip !debug)
+
+pkgver() {
+  echo "${pkgver}"
+}
+
+prepare() {
+  true
+}
+
+build() {
+  true
+}
+
+package() {
+  mkdir -p "$pkgdir/usr/local/bin"
+  mkdir -p "$pkgdir/usr/local/share/auto-cpufreq"
+  mkdir -p "$pkgdir/usr/share/polkit-1/actions"
+  mkdir -p "$pkgdir/usr/bin"
+  mkdir -p "$pkgdir/usr/lib/systemd/system"
+
+  # 从 git 源码树复制辅助脚本
+  cd "$srcdir/$_pkgname"
+  if [ -d scripts ]; then
+    cp -ru scripts "$pkgdir/usr/local/share/auto-cpufreq/"
+  fi
+
+  _install_custom() {
+    local src=$1 dest=$2 mode=$3
+    if [ -f "$src" ]; then
+      if [ ! -f "$dest" ] || ! cmp -s "$src" "$dest"; then
+        install -m"$mode" "$src" "$dest"
+      fi
+    fi
+  }
+  _install_custom "scripts/org.auto-cpufreq.pkexec.policy" "$pkgdir/usr/share/polkit-1/actions/org.auto-cpufreq.pkexec.policy" 644
+  _install_custom "scripts/cpufreqctl.sh" "$pkgdir/usr/local/bin/cpufreqctl.auto-cpufreq" 755
+
+  # 安装预编译 CLI 主二进制
+  cd "$srcdir"
+  local bin="auto-cpufreq"
+  local dest_bin="$pkgdir/usr/local/bin/$bin"
+  local link_path="$pkgdir/usr/bin/$bin"
+  local target_in_sys="/usr/local/bin/$bin"
+  install -m755 "$bin" "$dest_bin"
+  ln -sf "$target_in_sys" "$link_path"
+
+  # 安装 systemd service
+  install -Dm644 "$srcdir/auto-cpufreq.service" "$pkgdir/usr/lib/systemd/system/auto-cpufreq.service"
+
+  # 安装默认配置文件（标记 backup，升级不覆盖）
+  install -Dm644 "$srcdir/auto-cpufreq.conf" "$pkgdir/etc/auto-cpufreq.conf"
+
+  # share 目录软链接
+  local share_link="$pkgdir/usr/share/auto-cpufreq"
+  local share_target="/usr/local/share/auto-cpufreq"
+  if [ -d "$pkgdir$share_target" ]; then
+    if [ ! -L "$share_link" ] || [ "$(readlink "$share_link")" != "$share_target" ]; then
+      ln -sf "$share_target" "$share_link"
+    fi
+  fi
+}
