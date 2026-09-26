@@ -1,16 +1,24 @@
-#!/bin/sh
+#!/bin/bash
+set -e
 
-echo "正在启用 SLS 并重启 Steam..."
+systemd-run --user --quiet --collect /bin/bash -c '
+    set -e
 
-systemctl --user set-environment LD_AUDIT="/usr/lib32/libSLSsteam.so"
+    d="$XDG_RUNTIME_DIR/systemd/user/steam-launcher.service.d"
+    f="$d/sls.conf"
 
-systemd-run --user --unit=clear-ldaudit /bin/sh -c '
-    pidwait -x steam
-    until pgrep -x steam >/dev/null 2>&1; do
-        sleep 0.05
-    done
-    systemctl --user unset-environment LD_AUDIT
+    cleanup() { rm -rf "$d"; systemctl --user daemon-reload; }
+    trap cleanup EXIT INT TERM
+
+    mkdir -p "$d"
+    cat > "$f" << EOF
+[Service]
+ExecStart=
+ExecStart=/usr/bin/env LD_AUDIT=/usr/lib32/libSLSsteam.so /usr/lib/steamos/steam-launcher
+ExecStartPre=
+ExecStopPost=
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user restart steam-launcher.service
 '
-
-systemctl --user restart gamescope-session.target
-
